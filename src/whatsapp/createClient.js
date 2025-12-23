@@ -74,7 +74,7 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
   // Criar logger
   const logger = pino({ level: 'silent' }); // Silenciar logs do Baileys
 
-  // Criar socket do WhatsApp
+  // Criar socket do WhatsApp com configurações otimizadas para estabilidade
   const sock = makeWASocket({
     version,
     logger,
@@ -85,10 +85,29 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     },
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
+    // Configurações para melhorar estabilidade da conexão
+    connectTimeoutMs: 60_000, // 60 segundos para conectar
+    defaultQueryTimeoutMs: 60_000, // 60 segundos para queries
+    keepAliveIntervalMs: 10_000, // Keep-alive a cada 10 segundos
+    qrTimeout: 60_000, // 60 segundos para QR code
+    markOnlineOnConnect: true, // Marcar como online ao conectar
+    browser: ['Baileys Server', 'Chrome', '1.0.0'], // User agent
+    getMessage: async (key) => {
+      // Retornar undefined para não tentar baixar mensagens antigas
+      return undefined;
+    },
   });
 
-  // Salvar credenciais quando atualizadas
-  sock.ev.on('creds.update', saveCreds);
+  // Salvar credenciais quando atualizadas (CRÍTICO para manter sessão)
+  sock.ev.on('creds.update', async () => {
+    console.log(`[${instanceId}] 🔐 Credenciais atualizadas, salvando...`);
+    try {
+      await saveCreds();
+      console.log(`[${instanceId}] ✅ Credenciais salvas com sucesso`);
+    } catch (error) {
+      console.error(`[${instanceId}] ❌ Erro ao salvar credenciais:`, error);
+    }
+  });
 
   // Handler para eventos de conexão
   sock.ev.on('connection.update', (update) => {
@@ -115,6 +134,25 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     // Conexão estabelecida
     if (connection === 'open') {
       console.log(`[${instanceId}] ✅ WhatsApp conectado com sucesso!`);
+      
+      // Aguardar um pouco para garantir que a autenticação completa
+      setTimeout(async () => {
+        // Salvar credenciais novamente após conexão estabelecida
+        try {
+          await saveCreds();
+          console.log(`[${instanceId}] 💾 Credenciais finais salvas após autenticação completa`);
+        } catch (error) {
+          console.error(`[${instanceId}] ❌ Erro ao salvar credenciais finais:`, error);
+        }
+        
+        // Verificar se realmente está autenticado
+        if (sock.user) {
+          console.log(`[${instanceId}] ✅ Autenticação completa! Usuário: ${sock.user.id}`);
+        } else {
+          console.warn(`[${instanceId}] ⚠️  Conectado mas ainda não autenticado completamente`);
+        }
+      }, 2000); // Aguardar 2 segundos após conexão
+      
       if (onReady) onReady();
       return;
     }
@@ -158,12 +196,19 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
   // Handler para erros
   sock.ev.on('error', (error) => {
     console.error(`[${instanceId}] ❌ Erro no socket:`, error.message || error);
-    console.error(`[${instanceId}] Stack:`, error.stack);
+    if (error.stack) {
+      console.error(`[${instanceId}] Stack:`, error.stack);
+    }
   });
 
-  // Handler para eventos de credenciais (para debug)
-  sock.ev.on('creds.update', () => {
-    console.log(`[${instanceId}] 🔐 Credenciais atualizadas`);
+  // Handler para eventos de mensagens (para debug de autenticação)
+  sock.ev.on('messaging-history.set', () => {
+    console.log(`[${instanceId}] 📨 Histórico de mensagens carregado - autenticação avançando`);
+  });
+
+  // Handler para quando receber informações do usuário (autenticação completa)
+  sock.ev.on('creds.update', async () => {
+    console.log(`[${instanceId}] 🔐 Credenciais sendo atualizadas durante autenticação...`);
   });
 
   return sock;
