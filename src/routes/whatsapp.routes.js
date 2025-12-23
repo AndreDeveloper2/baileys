@@ -1,20 +1,20 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const manager = require('../whatsapp/manager');
+const manager = require("../whatsapp/manager");
 
 /**
  * POST /instances/create
  * Cria uma nova instância ou retorna status existente
  * Body: { instanceId: "user_123" }
  */
-router.post('/instances/create', async (req, res) => {
+router.post("/instances/create", async (req, res) => {
   try {
     const { instanceId } = req.body;
 
     if (!instanceId) {
       return res.status(400).json({
         success: false,
-        error: 'instanceId é obrigatório',
+        error: "instanceId é obrigatório",
       });
     }
 
@@ -22,7 +22,8 @@ router.post('/instances/create', async (req, res) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(instanceId)) {
       return res.status(400).json({
         success: false,
-        error: 'instanceId contém caracteres inválidos. Use apenas letras, números, _ e -',
+        error:
+          "instanceId contém caracteres inválidos. Use apenas letras, números, _ e -",
       });
     }
 
@@ -32,10 +33,10 @@ router.post('/instances/create', async (req, res) => {
 
     return res.json(result);
   } catch (error) {
-    console.error('[API] Erro ao criar instância:', error);
+    console.error("[API] Erro ao criar instância:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erro interno do servidor',
+      error: error.message || "Erro interno do servidor",
     });
   }
 });
@@ -44,7 +45,7 @@ router.post('/instances/create', async (req, res) => {
  * GET /instances/:instanceId/status
  * Obtém status de uma instância
  */
-router.get('/instances/:instanceId/status', (req, res) => {
+router.get("/instances/:instanceId/status", (req, res) => {
   try {
     const { instanceId } = req.params;
 
@@ -54,10 +55,10 @@ router.get('/instances/:instanceId/status', (req, res) => {
       connected: status.connected,
     });
   } catch (error) {
-    console.error('[API] Erro ao obter status:', error);
+    console.error("[API] Erro ao obter status:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erro interno do servidor',
+      error: error.message || "Erro interno do servidor",
     });
   }
 });
@@ -71,7 +72,7 @@ router.get('/instances/:instanceId/status', (req, res) => {
  *   message: "Olá, sua fatura venceu"
  * }
  */
-router.post('/messages/send', async (req, res) => {
+router.post("/messages/send", async (req, res) => {
   try {
     const { instanceId, to, message } = req.body;
 
@@ -79,30 +80,30 @@ router.post('/messages/send', async (req, res) => {
     if (!instanceId) {
       return res.status(400).json({
         success: false,
-        error: 'instanceId é obrigatório',
+        error: "instanceId é obrigatório",
       });
     }
 
     if (!to) {
       return res.status(400).json({
         success: false,
-        error: 'to (destinatário) é obrigatório',
+        error: "to (destinatário) é obrigatório",
       });
     }
 
     if (!message) {
       return res.status(400).json({
         success: false,
-        error: 'message é obrigatória',
+        error: "message é obrigatória",
       });
     }
 
     // Validar formato do número (apenas números)
-    const phoneNumber = to.replace(/\D/g, '');
+    const phoneNumber = to.replace(/\D/g, "");
     if (!phoneNumber || phoneNumber.length < 10) {
       return res.status(400).json({
         success: false,
-        error: 'Número de telefone inválido',
+        error: "Número de telefone inválido",
       });
     }
 
@@ -112,13 +113,13 @@ router.post('/messages/send', async (req, res) => {
     if (!socket) {
       return res.status(404).json({
         success: false,
-        error: 'Instância não encontrada ou não conectada',
+        error: "Instância não encontrada ou não conectada",
       });
     }
 
     // Formatar número (adicionar @s.whatsapp.net se necessário)
-    const jid = phoneNumber.includes('@') 
-      ? phoneNumber 
+    const jid = phoneNumber.includes("@")
+      ? phoneNumber
       : `${phoneNumber}@s.whatsapp.net`;
 
     console.log(`[API] Enviando mensagem de ${instanceId} para ${jid}`);
@@ -130,10 +131,10 @@ router.post('/messages/send', async (req, res) => {
       success: true,
     });
   } catch (error) {
-    console.error('[API] Erro ao enviar mensagem:', error);
+    console.error("[API] Erro ao enviar mensagem:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erro interno do servidor',
+      error: error.message || "Erro interno do servidor",
     });
   }
 });
@@ -142,7 +143,7 @@ router.post('/messages/send', async (req, res) => {
  * DELETE /instances/:instanceId
  * Remove uma instância (opcional)
  */
-router.delete('/instances/:instanceId', async (req, res) => {
+router.delete("/instances/:instanceId", async (req, res) => {
   try {
     const { instanceId } = req.params;
 
@@ -150,13 +151,13 @@ router.delete('/instances/:instanceId', async (req, res) => {
 
     return res.json({
       success: true,
-      message: 'Instância removida com sucesso',
+      message: "Instância removida com sucesso",
     });
   } catch (error) {
-    console.error('[API] Erro ao remover instância:', error);
+    console.error("[API] Erro ao remover instância:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erro interno do servidor',
+      error: error.message || "Erro interno do servidor",
     });
   }
 });
@@ -165,7 +166,7 @@ router.delete('/instances/:instanceId', async (req, res) => {
  * GET /instances
  * Lista todas as instâncias ativas (opcional, útil para debug)
  */
-router.get('/instances', (req, res) => {
+router.get("/instances", (req, res) => {
   try {
     const instances = manager.listInstances();
     const instancesStatus = instances.map((id) => ({
@@ -177,13 +178,12 @@ router.get('/instances', (req, res) => {
       instances: instancesStatus,
     });
   } catch (error) {
-    console.error('[API] Erro ao listar instâncias:', error);
+    console.error("[API] Erro ao listar instâncias:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Erro interno do servidor',
+      error: error.message || "Erro interno do servidor",
     });
   }
 });
 
 module.exports = router;
-

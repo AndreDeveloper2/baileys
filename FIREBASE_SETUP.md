@@ -33,10 +33,12 @@ Este guia mostra como configurar o Firebase para persistência de sessões do Wh
 1. No Railway, vá em **"Variables"**
 2. Clique em **"New Variable"**
 3. Configure:
+
    - **Nome:** `FIREBASE_SERVICE_ACCOUNT`
    - **Valor:** Abra o arquivo JSON baixado, copie TODO o conteúdo e cole aqui como string
-   
+
    Exemplo do valor:
+
    ```
    {"type":"service_account","project_id":"meu-projeto","private_key_id":"xxx",...}
    ```
@@ -121,4 +123,3 @@ Para testar localmente sem Railway:
 3. Ou defina a variável `FIREBASE_SERVICE_ACCOUNT` no seu `.env`
 
 **Importante:** Nunca commite o arquivo JSON no Git! (já está no `.gitignore`)
-

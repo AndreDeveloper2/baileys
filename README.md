@@ -22,26 +22,30 @@ Microserviço Node.js para integração com WhatsApp usando a biblioteca **Baile
 ## 🚀 Instalação
 
 1. Clone o repositório:
+
 ```bash
 git clone <seu-repositorio>
 cd baileys
 ```
 
 2. Instale as dependências:
+
 ```bash
 npm install
 ```
 
 3. **(Opcional) Configure Firebase** (recomendado para produção):
-   
+
    Veja a seção [🔥 Configuração do Firebase](#-configuração-do-firebase) abaixo.
 
 4. Inicie o servidor:
+
 ```bash
 npm start
 ```
 
 Ou em modo desenvolvimento (com watch):
+
 ```bash
 npm run dev
 ```
@@ -59,6 +63,7 @@ Cria uma nova instância WhatsApp ou retorna status de uma existente.
 **POST** `/instances/create`
 
 **Body:**
+
 ```json
 {
   "instanceId": "user_123"
@@ -66,6 +71,7 @@ Cria uma nova instância WhatsApp ou retorna status de uma existente.
 ```
 
 **Resposta (QR Code necessário):**
+
 ```json
 {
   "status": "qr",
@@ -74,6 +80,7 @@ Cria uma nova instância WhatsApp ou retorna status de uma existente.
 ```
 
 **Resposta (Já conectado):**
+
 ```json
 {
   "status": "connected",
@@ -90,6 +97,7 @@ Verifica se uma instância está conectada.
 **GET** `/instances/:instanceId/status`
 
 **Resposta:**
+
 ```json
 {
   "connected": true
@@ -105,6 +113,7 @@ Envia uma mensagem de texto via WhatsApp.
 **POST** `/messages/send`
 
 **Body:**
+
 ```json
 {
   "instanceId": "user_123",
@@ -114,6 +123,7 @@ Envia uma mensagem de texto via WhatsApp.
 ```
 
 **Resposta:**
+
 ```json
 {
   "success": true
@@ -121,6 +131,7 @@ Envia uma mensagem de texto via WhatsApp.
 ```
 
 **Observações:**
+
 - O número `to` pode ser fornecido com ou sem formatação (apenas números ou com caracteres especiais)
 - O sistema remove automaticamente caracteres não numéricos
 - O número deve incluir código do país (ex: 55 para Brasil)
@@ -134,6 +145,7 @@ Lista todas as instâncias ativas.
 **GET** `/instances`
 
 **Resposta:**
+
 ```json
 {
   "instances": [
@@ -155,6 +167,7 @@ Remove uma instância (faz logout).
 **DELETE** `/instances/:instanceId`
 
 **Resposta:**
+
 ```json
 {
   "success": true,
@@ -171,6 +184,7 @@ Verifica se o servidor está rodando.
 **GET** `/health`
 
 **Resposta:**
+
 ```json
 {
   "status": "ok",
@@ -195,16 +209,18 @@ curl -X POST http://localhost:3000/instances/create \
 A resposta conterá um QR Code em base64. Você pode:
 
 1. **Decodificar em HTML:**
+
 ```html
 <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..." />
 ```
 
 2. **Salvar como imagem:**
+
 ```javascript
-const fs = require('fs');
+const fs = require("fs");
 const base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...";
-const data = base64.replace(/^data:image\/\w+;base64,/, '');
-fs.writeFileSync('qrcode.png', data, 'base64');
+const data = base64.replace(/^data:image\/\w+;base64,/, "");
+fs.writeFileSync("qrcode.png", data, "base64");
 ```
 
 ### Passo 2: Escanear QR Code
@@ -285,6 +301,7 @@ export GOOGLE_APPLICATION_CREDENTIALS="./firebase-service-account.json"
 O sistema criará automaticamente uma coleção chamada `whatsapp_sessions` no Firestore.
 
 Cada documento terá:
+
 - **ID do documento:** `instanceId` (ex: "user_123")
 - **Campos:**
   - `creds`: Credenciais do WhatsApp (string JSON)
@@ -341,21 +358,25 @@ Se não estiver configurado:
 ### Método 1: Via Railway CLI
 
 1. Instale o Railway CLI:
+
 ```bash
 npm i -g @railway/cli
 ```
 
 2. Faça login:
+
 ```bash
 railway login
 ```
 
 3. Inicialize o projeto:
+
 ```bash
 railway init
 ```
 
 4. Faça deploy:
+
 ```bash
 railway up
 ```
@@ -374,6 +395,7 @@ railway up
 1. **Variáveis de Ambiente:**
 
    O Railway automaticamente:
+
    - ✅ Detecta Node.js
    - ✅ Usa `npm start` para iniciar
    - ✅ Define a variável `PORT` automaticamente
@@ -381,10 +403,12 @@ railway up
 2. **Configurar Firebase (Recomendado):**
 
    Para persistência de sessões no Firebase:
+
    - Adicione a variável `FIREBASE_SERVICE_ACCOUNT` com o conteúdo completo do JSON da Service Account
    - Ou configure `GOOGLE_APPLICATION_CREDENTIALS` se usar arquivo (menos recomendado)
 
    **Como adicionar variável no Railway:**
+
    1. Vá em "Variables" no seu projeto
    2. Clique em "New Variable"
    3. Nome: `FIREBASE_SERVICE_ACCOUNT`
@@ -430,17 +454,20 @@ baileys-server/
 ## 🔄 Como Funciona
 
 1. **Criação de Instância:**
+
    - Verifica se já existe uma sessão persistida (Firebase ou filesystem)
    - Se existe, tenta reconectar automaticamente **sem gerar novo QR**
    - Se não existe, gera QR Code para primeira conexão
 
 2. **Persistência:**
+
    - **Com Firebase:** Credenciais salvas no Firestore (`whatsapp_sessions/{instanceId}`)
    - **Sem Firebase:** Credenciais salvas em `sessions/{instanceId}/` (filesystem local)
    - Sessões sobrevivem a reinicializações do servidor/redeploy
    - Para desconectar permanentemente, use DELETE `/instances/:instanceId`
 
 3. **Reconexão:**
+
    - Se a conexão cair, o sistema tenta reconectar automaticamente
    - Mantém as sessões salvas para reconexão rápida
    - **Com Firebase:** Sessões são compartilhadas entre múltiplos containers
@@ -456,16 +483,19 @@ baileys-server/
 ## 🐛 Troubleshooting
 
 ### QR Code não aparece
+
 - Verifique se a instância foi criada corretamente
 - Aguarde alguns segundos, o QR pode levar tempo para gerar
 - Se já existe sessão, a instância pode conectar automaticamente sem QR
 
 ### Instância não conecta
+
 - Verifique se escaneou o QR Code no WhatsApp
 - Verifique os logs do servidor
 - Tente remover a instância e criar novamente
 
 ### Mensagem não envia
+
 - Verifique se a instância está conectada (`GET /instances/:instanceId/status`)
 - Verifique o formato do número (deve incluir código do país)
 - Verifique os logs do servidor para erros
@@ -485,4 +515,3 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull r
 ---
 
 **Desenvolvido com ❤️ usando Baileys**
-

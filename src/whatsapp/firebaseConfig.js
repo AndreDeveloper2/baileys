@@ -35,18 +35,10 @@ function initializeFirebase() {
       return admin.firestore();
     }
 
-    // Tentar inicializar com credenciais padrão (para desenvolvimento local)
-    try {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-      });
-      console.log('✅ Firebase inicializado com credenciais padrão');
-      return admin.firestore();
-    } catch (error) {
-      throw new Error(
-        'Firebase não configurado. Configure FIREBASE_SERVICE_ACCOUNT ou GOOGLE_APPLICATION_CREDENTIALS'
-      );
-    }
+    // Não tentar inicializar automaticamente - só usar se explicitamente configurado
+    throw new Error(
+      'Firebase não configurado. Configure FIREBASE_SERVICE_ACCOUNT ou GOOGLE_APPLICATION_CREDENTIALS'
+    );
   } catch (error) {
     console.error('❌ Erro ao inicializar Firebase:', error.message);
     throw error;
