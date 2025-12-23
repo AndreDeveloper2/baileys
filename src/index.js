@@ -1,3 +1,20 @@
+// CRÍTICO: Garantir que crypto está disponível antes de importar qualquer coisa
+// O Baileys precisa do Web Crypto API (disponível no Node.js 15+)
+const crypto = require('crypto');
+
+// Node.js 15+ tem webcrypto disponível via require('crypto').webcrypto
+// Node.js 18+ tem disponível globalmente como globalThis.crypto
+if (typeof globalThis.crypto === 'undefined' && typeof global.crypto === 'undefined') {
+  if (crypto.webcrypto) {
+    // Usar webcrypto do Node.js se disponível
+    globalThis.crypto = crypto.webcrypto;
+    global.crypto = crypto.webcrypto;
+    console.log('✅ Web Crypto API configurado via crypto.webcrypto');
+  } else {
+    console.warn('⚠️  Web Crypto API não disponível. Baileys pode não funcionar corretamente.');
+  }
+}
+
 const createApp = require('./server');
 const path = require('path');
 const fs = require('fs').promises;
