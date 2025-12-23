@@ -1,0 +1,30 @@
+### Health Check
+GET http://localhost:3000/health
+
+### Criar Instância e Obter QR Code
+POST http://localhost:3000/instances/create
+Content-Type: application/json
+
+{
+  "instanceId": "user_123"
+}
+
+### Verificar Status da Instância
+GET http://localhost:3000/instances/user_123/status
+
+### Enviar Mensagem
+POST http://localhost:3000/messages/send
+Content-Type: application/json
+
+{
+  "instanceId": "user_123",
+  "to": "5511999999999",
+  "message": "Olá, sua fatura venceu"
+}
+
+### Listar Todas as Instâncias
+GET http://localhost:3000/instances
+
+### Remover Instância
+DELETE http://localhost:3000/instances/user_123
+
