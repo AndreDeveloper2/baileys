@@ -98,8 +98,10 @@ class WhatsAppManager {
       let qrGenerated = false;
       let readyCalled = false;
       let resolved = false;
+      let timeoutId = null;
 
       const safeResolve = (data) => {
+        if (timeoutId) clearTimeout(timeoutId);
         if (!resolved) {
           resolved = true;
           resolve(data);
@@ -164,6 +166,39 @@ class WhatsAppManager {
         }
       };
 
+      // Timeout para evitar que a promise fique pendente indefinidamente
+      if (expectQR) {
+        // Se esperamos QR, aguardar até 30 segundos
+        timeoutId = setTimeout(() => {
+          if (!resolved) {
+            console.warn(`[${instanceId}] ⏱️  Timeout aguardando QR code (30s)`);
+            safeResolve({
+              status: 'error',
+              error: 'Timeout aguardando QR code. Tente novamente.',
+            });
+          }
+        }, 30000);
+      } else {
+        // Se não esperamos QR, aguardar até 10 segundos para reconexão
+        timeoutId = setTimeout(() => {
+          if (!resolved) {
+            const inst = this.instances.get(instanceId);
+            if (inst && inst.connected) {
+              safeResolve({
+                status: 'connected',
+                connected: true,
+              });
+            } else {
+              console.warn(`[${instanceId}] ⏱️  Timeout aguardando conexão (10s)`);
+              safeResolve({
+                status: 'error',
+                error: 'Timeout aguardando conexão. Pode precisar gerar novo QR code.',
+              });
+            }
+          }
+        }, 10000);
+      }
+
       // Criar cliente
       createClient(instanceId, onQR, onReady, onDisconnect)
         .then((socket) => {
@@ -175,8 +210,11 @@ class WhatsAppManager {
           };
           this.instances.set(instanceId, instance);
 
+          console.log(`[${instanceId}] Socket criado, aguardando eventos...`);
+
           // Se já está conectado, resolver imediatamente
           if (socket.user) {
+            console.log(`[${instanceId}] Já conectado (socket.user existe)`);
             onReady();
             if (!expectQR && !resolved) {
               safeResolve({
@@ -195,20 +233,19 @@ class WhatsAppManager {
                     connected: true,
                   });
                 } else {
-                  // Se não conectou em 3 segundos, pode precisar de novo QR
-                  // Mas não vamos resolver aqui, a conexão pode acontecer depois
-                  // O onReady resolverá quando conectar
+                  // Se não conectou, aguardar mais - o timeout vai resolver
+                  console.log(`[${instanceId}] Ainda não conectou, aguardando...`);
                 }
               }
-            }, 3000);
+            }, 5000);
           }
         })
         .catch((error) => {
-          console.error(`[${instanceId}] Erro ao criar cliente:`, error);
+          console.error(`[${instanceId}] ❌ Erro ao criar cliente:`, error);
           this.instances.delete(instanceId);
           safeResolve({
             status: 'error',
-            error: error.message,
+            error: error.message || 'Erro desconhecido ao criar cliente',
           });
         });
     });

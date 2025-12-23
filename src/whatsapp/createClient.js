@@ -92,11 +92,23 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
 
   // Handler para eventos de conexão
   sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
+    const { connection, lastDisconnect, qr, isNewLogin, isOnline } = update;
+
+    // Log detalhado para debug
+    console.log(`[${instanceId}] 🔄 Connection update:`, {
+      connection,
+      hasQR: !!qr,
+      isNewLogin,
+      isOnline,
+      error: lastDisconnect?.error?.message || lastDisconnect?.error?.output?.statusCode || null
+    });
 
     // QR Code gerado
     if (qr) {
-      if (onQR) onQR(qr);
+      console.log(`[${instanceId}] 📱 QR Code recebido, processando...`);
+      if (onQR) {
+        onQR(qr);
+      }
       return;
     }
 
@@ -109,20 +121,20 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
 
     // Conexão fechada
     if (connection === 'close') {
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
       console.log(
-        `[${instanceId}] Conexão fechada. Status:`,
-        lastDisconnect?.error?.output?.statusCode
+        `[${instanceId}] ❌ Conexão fechada. Status: ${statusCode || 'undefined'}`,
+        lastDisconnect?.error?.message || ''
       );
 
       if (shouldReconnect) {
-        console.log(`[${instanceId}] 🔄 Tentando reconectar...`);
-        // Reconectar após 3 segundos
+        console.log(`[${instanceId}] 🔄 Tentando reconectar em 5 segundos...`);
+        // Reconectar após 5 segundos (aumentado para dar mais tempo)
         setTimeout(() => {
           createClient(instanceId, onQR, onReady, onDisconnect);
-        }, 3000);
+        }, 5000);
       } else {
         console.log(`[${instanceId}] ❌ Desconectado permanentemente (logado out).`);
         // Se foi logout, remover sessão
@@ -131,16 +143,27 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       return;
     }
 
-    // Conexão conectando
+    // Outros estados de conexão
     if (connection === 'connecting') {
-      console.log(`[${instanceId}] 🔌 Conectando...`);
+      console.log(`[${instanceId}] 🔌 Conectando ao WhatsApp...`);
+      return;
+    }
+
+    if (connection === 'close' || connection === null || connection === undefined) {
+      // Aguardar QR ou outros eventos antes de considerar como erro
       return;
     }
   });
 
   // Handler para erros
   sock.ev.on('error', (error) => {
-    console.error(`[${instanceId}] ❌ Erro no socket:`, error);
+    console.error(`[${instanceId}] ❌ Erro no socket:`, error.message || error);
+    console.error(`[${instanceId}] Stack:`, error.stack);
+  });
+
+  // Handler para eventos de credenciais (para debug)
+  sock.ev.on('creds.update', () => {
+    console.log(`[${instanceId}] 🔐 Credenciais atualizadas`);
   });
 
   return sock;
