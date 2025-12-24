@@ -135,7 +135,7 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       return;
     }
 
-    // IMPORTANTE: Verificar se é novo login e está online
+    // IMPORTANTE: Verificar se é novo login
     if (isNewLogin === true) {
       console.log(`[${instanceId}] 🆕 Novo login detectado!`);
       // Salvar credenciais imediatamente em novo login
@@ -147,54 +147,91 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       }
     }
 
-    // Conexão estabelecida E online - AGORA SIM está realmente autenticado
-    if (connection === 'open' && isOnline === true) {
-      console.log(`[${instanceId}] ✅ WhatsApp conectado E online - autenticação completa!`);
-      
-      // Verificar se tem usuário
-      if (sock.user) {
-        console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
-      }
+    // Conexão estabelecida - verificar sinais de autenticação completa
+    if (connection === 'open') {
+      // Verificar sinais de que está realmente autenticado:
+      // 1. isOnline === true OU
+      // 2. receivedPendingNotifications === true OU  
+      // 3. sock.user existe E já passou alguns segundos desde a conexão
+      const hasUser = !!sock.user;
+      const hasNotifications = receivedPendingNotifications === true;
+      const isOnlineStatus = isOnline === true;
 
-      // Salvar credenciais finais
-      try {
-        await saveCreds();
-        console.log(`[${instanceId}] 💾 Credenciais finais salvas`);
-      } catch (error) {
-        console.error(`[${instanceId}] ❌ Erro ao salvar credenciais finais:`, error);
-      }
+      console.log(`[${instanceId}] ✅ Conexão aberta. Verificando autenticação:`, {
+        hasUser,
+        hasNotifications,
+        isOnline: isOnlineStatus,
+        receivedPendingNotifications
+      });
 
-      // Enviar presença para confirmar que está ativo (IMPORTANTE!)
-      try {
-        await sock.sendPresenceUpdate('available');
-        console.log(`[${instanceId}] 📡 Presença atualizada para 'available'`);
-      } catch (error) {
-        console.error(`[${instanceId}] ⚠️  Erro ao enviar presença:`, error);
-      }
+      // Se já tem usuário ou recebeu notificações, está autenticado
+      if (hasUser || hasNotifications || isOnlineStatus) {
+        console.log(`[${instanceId}] ✅ Autenticação confirmada!`);
+        
+        // Verificar se tem usuário
+        if (sock.user) {
+          console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
+        }
 
-      // AGORA sim chamar onReady - quando realmente está online (apenas uma vez)
-      if (onReady && !readyCalled) {
-        readyCalled = true;
-        setTimeout(() => {
-          onReady();
-          console.log(`[${instanceId}] ✅ onReady chamado - instância pronta para uso`);
-        }, 1000); // Pequeno delay para garantir que tudo está pronto
-      }
-      return;
-    }
+        // Salvar credenciais finais
+        try {
+          await saveCreds();
+          console.log(`[${instanceId}] 💾 Credenciais finais salvas`);
+        } catch (error) {
+          console.error(`[${instanceId}] ❌ Erro ao salvar credenciais finais:`, error);
+        }
 
-    // Conexão aberta mas ainda não online - aguardar
-    if (connection === 'open' && isOnline !== true) {
-      console.log(`[${instanceId}] ⏳ Conectado mas aguardando ficar online (isOnline: ${isOnline})...`);
-      // Não chamar onReady ainda - aguardar isOnline: true
-      
-      // Salvar credenciais mesmo assim (pode estar quase pronto)
-      try {
-        await saveCreds();
-      } catch (error) {
-        console.error(`[${instanceId}] ❌ Erro ao salvar credenciais:`, error);
+        // Enviar presença para confirmar que está ativo (CRÍTICO!)
+        try {
+          await sock.sendPresenceUpdate('available');
+          console.log(`[${instanceId}] 📡 Presença atualizada para 'available'`);
+        } catch (error) {
+          console.error(`[${instanceId}] ⚠️  Erro ao enviar presença:`, error);
+        }
+
+        // Chamar onReady (apenas uma vez)
+        if (onReady && !readyCalled) {
+          readyCalled = true;
+          // Aguardar um pouco antes de chamar onReady para garantir estabilidade
+          setTimeout(() => {
+            onReady();
+            console.log(`[${instanceId}] ✅ onReady chamado - instância pronta para uso`);
+          }, 2000); // 2 segundos para garantir que tudo está estável
+        }
+        return;
+      } else {
+        // Conectado mas ainda não vemos sinais claros - aguardar mais um pouco
+        console.log(`[${instanceId}] ⏳ Conectado mas aguardando sinais de autenticação completa...`);
+        
+        // Salvar credenciais mesmo assim
+        try {
+          await saveCreds();
+        } catch (error) {
+          console.error(`[${instanceId}] ❌ Erro ao salvar credenciais:`, error);
+        }
+
+        // Aguardar alguns segundos e verificar novamente
+        setTimeout(async () => {
+          if (sock.user && !readyCalled) {
+            console.log(`[${instanceId}] ✅ Usuário detectado após espera - autenticação completa!`);
+            
+            try {
+              await saveCreds();
+              await sock.sendPresenceUpdate('available');
+              console.log(`[${instanceId}] 📡 Presença enviada`);
+            } catch (error) {
+              console.error(`[${instanceId}] Erro:`, error);
+            }
+
+            if (onReady && !readyCalled) {
+              readyCalled = true;
+              onReady();
+              console.log(`[${instanceId}] ✅ onReady chamado após espera`);
+            }
+          }
+        }, 5000); // Aguardar 5 segundos e verificar novamente
+        return;
       }
-      return;
     }
 
     // Conexão fechada
