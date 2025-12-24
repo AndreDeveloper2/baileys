@@ -4,11 +4,11 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  Browsers,
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const path = require("path");
 const fs = require("fs").promises;
-const Browsers = require("@whiskeysockets/baileys").Browsers;
 
 let useFirebaseAuthState = null;
 let firebaseAvailable = false;
@@ -75,30 +75,26 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    // CRÍTICO: Disfarçar como cliente real (não servidor)
-    browser: Browsers.ubuntu("Chrome"),
-    userAgent:
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    // ⚠️ CRÍTICO: Disfarçar como cliente mobile real
+    // WhatsApp bloqueia se detectar servidor
+    browser: Browsers.windows("Chrome"),
+    mobile: false,
 
-    // Configurações de conexão
+    // Anti-detecção
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: 60_000,
-    keepAliveIntervalMs: 10_000,
+    keepAliveIntervalMs: 15_000,
     qrTimeout: 60_000,
     markOnlineOnConnect: true,
+
+    // ⚠️ IMPORTANTE: Adicionar delays aleatórios (parece mais natural)
+    retryRequestDelayMs: 100 + Math.random() * 200,
 
     getMessage: async (key) => {
       return undefined;
     },
-
-    // Configurações para evitar detecção de bot
-    maxMsToWaitForConnection: 10_000,
-    fetchMessagesOnWaiting: true,
-    downloadHistory: false,
-    recoverVeryQuickly: true,
-    retryRequestDelayMs: 100,
 
     shouldIgnoreJid: (jid) => {
       return (
@@ -121,19 +117,20 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
   let connectionStartTime = null;
 
   sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, qr, isNewLogin, isOnline } = update;
+    const { connection, lastDisconnect, qr, isNewLogin } = update;
 
     console.log(`[${instanceId}] 🔄 Connection update:`, {
       connection,
       hasQR: !!qr,
       isNewLogin,
-      isOnline,
       error: lastDisconnect?.error?.message || null,
     });
 
     // QR Code gerado
     if (qr) {
-      console.log(`[${instanceId}] 🔐 QR Code recebido`);
+      console.log(
+        `[${instanceId}] 🔐 QR Code recebido - escaneie com o celular`
+      );
       connectionStartTime = Date.now();
       if (onQR) {
         onQR(qr);
@@ -146,7 +143,6 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       console.log(`[${instanceId}] 🆕 Novo login detectado!`);
       try {
         await saveCreds();
-        console.log(`[${instanceId}] 💾 Credenciais salvas após novo login`);
       } catch (error) {
         console.error(
           `[${instanceId}] ❌ Erro ao salvar após novo login:`,
@@ -162,14 +158,11 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
         connectionStartTime = Date.now();
       }
 
-      // CORREÇÃO 3: Timeout para evitar "conectando" infinito
       const elapsed = Date.now() - connectionStartTime;
       if (elapsed > 45000) {
-        // 45 segundos de "conectando"
         console.warn(
-          `[${instanceId}] ⏱️  Timeout na conexão - recriando cliente`
+          `[${instanceId}] ⏱️  Timeout na conexão (45s) - recriando cliente`
         );
-        // Fechar conexão e recriar
         try {
           await sock.end();
         } catch (e) {}
@@ -183,34 +176,42 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       const elapsed = connectionStartTime
         ? (Date.now() - connectionStartTime) / 1000
         : 0;
-      console.log(`[${instanceId}] ✅ Conexão aberta (${elapsed.toFixed(1)}s)`);
+      console.log(
+        `[${instanceId}] ✅ Conexão aberta com WhatsApp (${elapsed.toFixed(
+          1
+        )}s)`
+      );
 
-      // CORREÇÃO 4: Aguardar um pouco para garantir que socket.user está disponível
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Aguardar socket.user estar disponível
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const hasUser = !!sock.user;
-      console.log(`[${instanceId}] Verificando autenticação:`, {
+      console.log(`[${instanceId}] 🔍 Verificando autenticação:`, {
         hasUser,
-        userId: sock.user?.id,
+        userId: sock.user?.id || "undefined",
       });
 
       if (hasUser) {
         console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
 
-        // CORREÇÃO 5: Enviar presença antes de chamar onReady
+        // Enviar presença para confirmar autenticação
         try {
           await sock.sendPresenceUpdate("available");
-          console.log(`[${instanceId}] 📡 Presença enviada`);
+          console.log(`[${instanceId}] 📡 Status enviado como 'available'`);
         } catch (error) {
-          console.error(`[${instanceId}] ⚠️  Erro ao enviar presença:`, error);
+          console.warn(
+            `[${instanceId}] ⚠️  Erro ao enviar presença:`,
+            error.message
+          );
         }
 
+        // Salvar credenciais
         try {
           await saveCreds();
           console.log(`[${instanceId}] 💾 Credenciais finais salvas`);
         } catch (error) {
           console.error(
-            `[${instanceId}] ❌ Erro ao salvar credenciais finais:`,
+            `[${instanceId}] ❌ Erro ao salvar credenciais:`,
             error
           );
         }
@@ -224,13 +225,13 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
         return;
       } else {
         console.warn(
-          `[${instanceId}] ⏳ Conexão aberta mas socket.user ainda não disponível`
+          `[${instanceId}] ⏳ Conectado ao WhatsApp mas socket.user ainda não disponível`
         );
         // Aguardar mais um pouco
         setTimeout(async () => {
           if (sock.user && !readyCalled) {
             console.log(
-              `[${instanceId}] ✅ socket.user detectado após espera!`
+              `[${instanceId}] ✅ socket.user detectado! Autenticando...`
             );
             try {
               await sock.sendPresenceUpdate("available");
