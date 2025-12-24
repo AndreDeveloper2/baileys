@@ -109,9 +109,12 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     }
   });
 
+  // Variável para rastrear se já chamou onReady (evitar chamar múltiplas vezes)
+  let readyCalled = false;
+
   // Handler para eventos de conexão
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr, isNewLogin, isOnline } = update;
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr, isNewLogin, isOnline, receivedPendingNotifications } = update;
 
     // Log detalhado para debug
     console.log(`[${instanceId}] 🔄 Connection update:`, {
@@ -119,6 +122,7 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       hasQR: !!qr,
       isNewLogin,
       isOnline,
+      receivedPendingNotifications,
       error: lastDisconnect?.error?.message || lastDisconnect?.error?.output?.statusCode || null
     });
 
@@ -131,29 +135,65 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       return;
     }
 
-    // Conexão estabelecida
-    if (connection === 'open') {
-      console.log(`[${instanceId}] ✅ WhatsApp conectado com sucesso!`);
+    // IMPORTANTE: Verificar se é novo login e está online
+    if (isNewLogin === true) {
+      console.log(`[${instanceId}] 🆕 Novo login detectado!`);
+      // Salvar credenciais imediatamente em novo login
+      try {
+        await saveCreds();
+        console.log(`[${instanceId}] 💾 Credenciais salvas após novo login`);
+      } catch (error) {
+        console.error(`[${instanceId}] ❌ Erro ao salvar após novo login:`, error);
+      }
+    }
+
+    // Conexão estabelecida E online - AGORA SIM está realmente autenticado
+    if (connection === 'open' && isOnline === true) {
+      console.log(`[${instanceId}] ✅ WhatsApp conectado E online - autenticação completa!`);
       
-      // Aguardar um pouco para garantir que a autenticação completa
-      setTimeout(async () => {
-        // Salvar credenciais novamente após conexão estabelecida
-        try {
-          await saveCreds();
-          console.log(`[${instanceId}] 💾 Credenciais finais salvas após autenticação completa`);
-        } catch (error) {
-          console.error(`[${instanceId}] ❌ Erro ao salvar credenciais finais:`, error);
-        }
-        
-        // Verificar se realmente está autenticado
-        if (sock.user) {
-          console.log(`[${instanceId}] ✅ Autenticação completa! Usuário: ${sock.user.id}`);
-        } else {
-          console.warn(`[${instanceId}] ⚠️  Conectado mas ainda não autenticado completamente`);
-        }
-      }, 2000); // Aguardar 2 segundos após conexão
+      // Verificar se tem usuário
+      if (sock.user) {
+        console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
+      }
+
+      // Salvar credenciais finais
+      try {
+        await saveCreds();
+        console.log(`[${instanceId}] 💾 Credenciais finais salvas`);
+      } catch (error) {
+        console.error(`[${instanceId}] ❌ Erro ao salvar credenciais finais:`, error);
+      }
+
+      // Enviar presença para confirmar que está ativo (IMPORTANTE!)
+      try {
+        await sock.sendPresenceUpdate('available');
+        console.log(`[${instanceId}] 📡 Presença atualizada para 'available'`);
+      } catch (error) {
+        console.error(`[${instanceId}] ⚠️  Erro ao enviar presença:`, error);
+      }
+
+      // AGORA sim chamar onReady - quando realmente está online (apenas uma vez)
+      if (onReady && !readyCalled) {
+        readyCalled = true;
+        setTimeout(() => {
+          onReady();
+          console.log(`[${instanceId}] ✅ onReady chamado - instância pronta para uso`);
+        }, 1000); // Pequeno delay para garantir que tudo está pronto
+      }
+      return;
+    }
+
+    // Conexão aberta mas ainda não online - aguardar
+    if (connection === 'open' && isOnline !== true) {
+      console.log(`[${instanceId}] ⏳ Conectado mas aguardando ficar online (isOnline: ${isOnline})...`);
+      // Não chamar onReady ainda - aguardar isOnline: true
       
-      if (onReady) onReady();
+      // Salvar credenciais mesmo assim (pode estar quase pronto)
+      try {
+        await saveCreds();
+      } catch (error) {
+        console.error(`[${instanceId}] ❌ Erro ao salvar credenciais:`, error);
+      }
       return;
     }
 
@@ -206,10 +246,6 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     console.log(`[${instanceId}] 📨 Histórico de mensagens carregado - autenticação avançando`);
   });
 
-  // Handler para quando receber informações do usuário (autenticação completa)
-  sock.ev.on('creds.update', async () => {
-    console.log(`[${instanceId}] 🔐 Credenciais sendo atualizadas durante autenticação...`);
-  });
 
   return sock;
 }
