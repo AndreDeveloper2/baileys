@@ -9,7 +9,6 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs').promises;
 
-// Tentar importar Firebase AuthState
 let useFirebaseAuthState = null;
 let firebaseAvailable = false;
 
@@ -27,18 +26,9 @@ try {
   console.log('⚠️  Firebase não disponível. Usando filesystem local como fallback');
 }
 
-/**
- * Cria uma conexão WhatsApp usando Baileys
- * @param {string} instanceId - ID único da instância
- * @param {function} onQR - Callback quando QR code for gerado
- * @param {function} onReady - Callback quando conexão estiver pronta
- * @param {function} onDisconnect - Callback quando desconectar
- * @returns {Promise<object>} Socket do Baileys
- */
 async function createClient(instanceId, onQR, onReady, onDisconnect) {
   let state, saveCreds;
 
-  // Tentar usar Firebase primeiro, fallback para filesystem
   if (firebaseAvailable && useFirebaseAuthState) {
     try {
       const authState = await useFirebaseAuthState(instanceId);
@@ -47,12 +37,10 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       console.log(`[${instanceId}] 🔥 Usando Firebase para persistência`);
     } catch (error) {
       console.error(`[${instanceId}] ❌ Erro ao usar Firebase, tentando filesystem:`, error.message);
-      // Fallback para filesystem
       firebaseAvailable = false;
     }
   }
 
-  // Fallback: usar filesystem local
   if (!firebaseAvailable) {
     const sessionPath = path.join(process.cwd(), 'sessions', instanceId);
     
@@ -68,39 +56,41 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     console.log(`[${instanceId}] 📁 Usando filesystem local para persistência`);
   }
 
-  // Obter versão mais recente do Baileys
   const { version } = await fetchLatestBaileysVersion();
+  const logger = pino({ level: 'silent' });
 
-  // Criar logger
-  const logger = pino({ level: 'silent' }); // Silenciar logs do Baileys
-
-  // Criar socket do WhatsApp com configurações otimizadas para estabilidade
   const sock = makeWASocket({
     version,
     logger,
-    printQRInTerminal: false, // Não imprimir QR no terminal
+    printQRInTerminal: false,
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
-    // Configurações para melhorar estabilidade da conexão
-    connectTimeoutMs: 60_000, // 60 segundos para conectar
-    defaultQueryTimeoutMs: 60_000, // 60 segundos para queries
-    keepAliveIntervalMs: 10_000, // Keep-alive a cada 10 segundos
-    qrTimeout: 60_000, // 60 segundos para QR code
-    markOnlineOnConnect: true, // Marcar como online ao conectar
-    browser: ['Baileys Server', 'Chrome', '1.0.0'], // User agent
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 60_000,
+    keepAliveIntervalMs: 10_000,
+    qrTimeout: 60_000,
+    markOnlineOnConnect: true,
+    // CORREÇÃO 1: Browser mais realista
+    browser: ['WhatsApp', 'Chrome', '120.0.0.0'],
     getMessage: async (key) => {
-      // Retornar undefined para não tentar baixar mensagens antigas
       return undefined;
+    },
+    // CORREÇÃO 2: Adicionar configurações de conexão mais robustas
+    maxMsToWaitForConnection: 10_000,
+    fetchMessagesOnWaiting: true,
+    downloadHistory: false,
+    shouldIgnoreJid: (jid) => {
+      // Ignorar alguns JIDs para evitar sobrecarga
+      return jid === 'status@broadcast' || jid.endsWith('@s.whatsapp.net') === false;
     },
   });
 
-  // Salvar credenciais quando atualizadas (CRÍTICO para manter sessão)
   sock.ev.on('creds.update', async () => {
-    console.log(`[${instanceId}] 🔐 Credenciais atualizadas, salvando...`);
+    console.log(`[${instanceId}] 📝 Credenciais atualizadas, salvando...`);
     try {
       await saveCreds();
       console.log(`[${instanceId}] ✅ Credenciais salvas com sucesso`);
@@ -109,36 +99,33 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     }
   });
 
-  // Variável para rastrear se já chamou onReady (evitar chamar múltiplas vezes)
   let readyCalled = false;
+  let connectionStartTime = null;
 
-  // Handler para eventos de conexão
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr, isNewLogin, isOnline, receivedPendingNotifications } = update;
+    const { connection, lastDisconnect, qr, isNewLogin, isOnline } = update;
 
-    // Log detalhado para debug
     console.log(`[${instanceId}] 🔄 Connection update:`, {
       connection,
       hasQR: !!qr,
       isNewLogin,
       isOnline,
-      receivedPendingNotifications,
-      error: lastDisconnect?.error?.message || lastDisconnect?.error?.output?.statusCode || null
+      error: lastDisconnect?.error?.message || null
     });
 
     // QR Code gerado
     if (qr) {
-      console.log(`[${instanceId}] 📱 QR Code recebido, processando...`);
+      console.log(`[${instanceId}] 🔐 QR Code recebido`);
+      connectionStartTime = Date.now();
       if (onQR) {
         onQR(qr);
       }
       return;
     }
 
-    // IMPORTANTE: Verificar se é novo login
+    // NOVO LOGIN
     if (isNewLogin === true) {
       console.log(`[${instanceId}] 🆕 Novo login detectado!`);
-      // Salvar credenciais imediatamente em novo login
       try {
         await saveCreds();
         console.log(`[${instanceId}] 💾 Credenciais salvas após novo login`);
@@ -147,33 +134,48 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       }
     }
 
-    // Conexão estabelecida - verificar sinais de autenticação completa
+    // CONECTANDO
+    if (connection === 'connecting') {
+      console.log(`[${instanceId}] 🔌 Conectando ao WhatsApp...`);
+      if (!connectionStartTime) {
+        connectionStartTime = Date.now();
+      }
+      
+      // CORREÇÃO 3: Timeout para evitar "conectando" infinito
+      const elapsed = Date.now() - connectionStartTime;
+      if (elapsed > 45000) { // 45 segundos de "conectando"
+        console.warn(`[${instanceId}] ⏱️  Timeout na conexão - recriando cliente`);
+        // Fechar conexão e recriar
+        try {
+          await sock.end();
+        } catch (e) {}
+        return;
+      }
+      return;
+    }
+
+    // CONEXÃO ABERTA
     if (connection === 'open') {
-      // Verificar sinais de que está realmente autenticado:
-      // 1. isOnline === true OU
-      // 2. receivedPendingNotifications === true OU  
-      // 3. sock.user existe E já passou alguns segundos desde a conexão
+      const elapsed = connectionStartTime ? (Date.now() - connectionStartTime) / 1000 : 0;
+      console.log(`[${instanceId}] ✅ Conexão aberta (${elapsed.toFixed(1)}s)`);
+
+      // CORREÇÃO 4: Aguardar um pouco para garantir que socket.user está disponível
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       const hasUser = !!sock.user;
-      const hasNotifications = receivedPendingNotifications === true;
-      const isOnlineStatus = isOnline === true;
+      console.log(`[${instanceId}] Verificando autenticação:`, { hasUser, userId: sock.user?.id });
 
-      console.log(`[${instanceId}] ✅ Conexão aberta. Verificando autenticação:`, {
-        hasUser,
-        hasNotifications,
-        isOnline: isOnlineStatus,
-        receivedPendingNotifications
-      });
-
-      // Se já tem usuário ou recebeu notificações, está autenticado
-      if (hasUser || hasNotifications || isOnlineStatus) {
-        console.log(`[${instanceId}] ✅ Autenticação confirmada!`);
+      if (hasUser) {
+        console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
         
-        // Verificar se tem usuário
-        if (sock.user) {
-          console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
+        // CORREÇÃO 5: Enviar presença antes de chamar onReady
+        try {
+          await sock.sendPresenceUpdate('available');
+          console.log(`[${instanceId}] 📡 Presença enviada`);
+        } catch (error) {
+          console.error(`[${instanceId}] ⚠️  Erro ao enviar presença:`, error);
         }
 
-        // Salvar credenciais finais
         try {
           await saveCreds();
           console.log(`[${instanceId}] 💾 Credenciais finais salvas`);
@@ -181,108 +183,64 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
           console.error(`[${instanceId}] ❌ Erro ao salvar credenciais finais:`, error);
         }
 
-        // Enviar presença para confirmar que está ativo (CRÍTICO!)
-        try {
-          await sock.sendPresenceUpdate('available');
-          console.log(`[${instanceId}] 📡 Presença atualizada para 'available'`);
-        } catch (error) {
-          console.error(`[${instanceId}] ⚠️  Erro ao enviar presença:`, error);
-        }
-
-        // Chamar onReady (apenas uma vez)
+        // Chamar onReady apenas uma vez
         if (onReady && !readyCalled) {
           readyCalled = true;
-          // Aguardar um pouco antes de chamar onReady para garantir estabilidade
-          setTimeout(() => {
-            onReady();
-            console.log(`[${instanceId}] ✅ onReady chamado - instância pronta para uso`);
-          }, 2000); // 2 segundos para garantir que tudo está estável
+          console.log(`[${instanceId}] ✅ onReady chamado - instância pronta!`);
+          onReady();
         }
         return;
       } else {
-        // Conectado mas ainda não vemos sinais claros - aguardar mais um pouco
-        console.log(`[${instanceId}] ⏳ Conectado mas aguardando sinais de autenticação completa...`);
-        
-        // Salvar credenciais mesmo assim
-        try {
-          await saveCreds();
-        } catch (error) {
-          console.error(`[${instanceId}] ❌ Erro ao salvar credenciais:`, error);
-        }
-
-        // Aguardar alguns segundos e verificar novamente
+        console.warn(`[${instanceId}] ⏳ Conexão aberta mas socket.user ainda não disponível`);
+        // Aguardar mais um pouco
         setTimeout(async () => {
           if (sock.user && !readyCalled) {
-            console.log(`[${instanceId}] ✅ Usuário detectado após espera - autenticação completa!`);
-            
+            console.log(`[${instanceId}] ✅ socket.user detectado após espera!`);
             try {
-              await saveCreds();
               await sock.sendPresenceUpdate('available');
-              console.log(`[${instanceId}] 📡 Presença enviada`);
+              await saveCreds();
             } catch (error) {
               console.error(`[${instanceId}] Erro:`, error);
             }
-
+            
             if (onReady && !readyCalled) {
               readyCalled = true;
               onReady();
-              console.log(`[${instanceId}] ✅ onReady chamado após espera`);
+              console.log(`[${instanceId}] ✅ onReady chamado`);
             }
           }
-        }, 5000); // Aguardar 5 segundos e verificar novamente
+        }, 3000);
         return;
       }
     }
 
-    // Conexão fechada
+    // CONEXÃO FECHADA
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-      console.log(
-        `[${instanceId}] ❌ Conexão fechada. Status: ${statusCode || 'undefined'}`,
-        lastDisconnect?.error?.message || ''
-      );
+      console.log(`[${instanceId}] ❌ Conexão fechada. Status: ${statusCode}`, lastDisconnect?.error?.message || '');
 
       if (shouldReconnect) {
-        console.log(`[${instanceId}] 🔄 Tentando reconectar em 5 segundos...`);
-        // Reconectar após 5 segundos (aumentado para dar mais tempo)
+        console.log(`[${instanceId}] 🔄 Reconectando em 5s...`);
         setTimeout(() => {
           createClient(instanceId, onQR, onReady, onDisconnect);
         }, 5000);
       } else {
-        console.log(`[${instanceId}] ❌ Desconectado permanentemente (logado out).`);
-        // Se foi logout, remover sessão
+        console.log(`[${instanceId}] ❌ Logout permanente`);
         if (onDisconnect) onDisconnect(true);
       }
       return;
     }
-
-    // Outros estados de conexão
-    if (connection === 'connecting') {
-      console.log(`[${instanceId}] 🔌 Conectando ao WhatsApp...`);
-      return;
-    }
-
-    if (connection === 'close' || connection === null || connection === undefined) {
-      // Aguardar QR ou outros eventos antes de considerar como erro
-      return;
-    }
   });
 
-  // Handler para erros
   sock.ev.on('error', (error) => {
-    console.error(`[${instanceId}] ❌ Erro no socket:`, error.message || error);
-    if (error.stack) {
-      console.error(`[${instanceId}] Stack:`, error.stack);
-    }
+    console.error(`[${instanceId}] ❌ Socket error:`, error.message || error);
   });
 
-  // Handler para eventos de mensagens (para debug de autenticação)
   sock.ev.on('messaging-history.set', () => {
-    console.log(`[${instanceId}] 📨 Histórico de mensagens carregado - autenticação avançando`);
+    console.log(`[${instanceId}] 📨 Histórico de mensagens carregado`);
   });
-
 
   return sock;
 }
