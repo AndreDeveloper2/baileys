@@ -1,3 +1,4 @@
+const { VERSION_LATEST } = require("./whatsapp-versions");
 const makeWASocket = require("@whiskeysockets/baileys").default;
 const {
   useMultiFileAuthState,
@@ -64,7 +65,20 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
     console.log(`[${instanceId}] 📁 Usando filesystem local para persistência`);
   }
 
-  const { version } = await fetchLatestBaileysVersion();
+  let version = VERSION_LATEST; // Usar versão fixa
+
+  // ⚠️ CRÍTICO: Definir versão específica do WhatsApp que não é bloqueada
+  // Você pode testar diferentes versões se esta não funcionar
+  version = {
+    isLatest: true,
+    version: [2, 3000, 1020885143],
+    binary: "PQ",
+  };
+
+  console.log(
+    `[${instanceId}] 📱 Usando versão WhatsApp: ${version.version.join(".")}`
+  );
+
   const logger = pino({ level: "silent" });
 
   const sock = makeWASocket({
