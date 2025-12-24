@@ -4,11 +4,11 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  Browsers,
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const path = require("path");
 const fs = require("fs").promises;
-const Browsers = require("@whiskeysockets/baileys").Browsers;
 
 let useFirebaseAuthState = null;
 let firebaseAvailable = false;
@@ -31,7 +31,13 @@ try {
   );
 }
 
-async function createClient(instanceId, onQR, onReady, onDisconnect) {
+async function createClientPaired(
+  instanceId,
+  pairingCode,
+  onQR,
+  onReady,
+  onDisconnect
+) {
   let state, saveCreds;
 
   if (firebaseAvailable && useFirebaseAuthState) {
@@ -67,6 +73,7 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
   const { version } = await fetchLatestBaileysVersion();
   const logger = pino({ level: "silent" });
 
+  // CRÍTICO: Usar device pairing ao invés de QR code
   const sock = makeWASocket({
     version,
     logger,
@@ -75,30 +82,29 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    // CRÍTICO: Disfarçar como cliente real (não servidor)
-    browser: Browsers.ubuntu("Chrome"),
-    userAgent:
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 
-    // Configurações de conexão
+    // Device pairing - mais seguro que QR code
+    // pairingCode é enviado para o cliente fazer login
+    mobile: false,
+
+    // Disfarçar como cliente Windows/Linux real
+    browser: Browsers.ubuntu("Chrome"),
+
+    // Configurações anti-detecção
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: 60_000,
-    keepAliveIntervalMs: 10_000,
+    keepAliveIntervalMs: 15_000,
     qrTimeout: 60_000,
     markOnlineOnConnect: true,
+    maxMsToWaitForConnection: 15_000,
+    fetchMessagesOnWaiting: true,
+    downloadHistory: false,
 
     getMessage: async (key) => {
       return undefined;
     },
-
-    // Configurações para evitar detecção de bot
-    maxMsToWaitForConnection: 10_000,
-    fetchMessagesOnWaiting: true,
-    downloadHistory: false,
-    recoverVeryQuickly: true,
-    retryRequestDelayMs: 100,
 
     shouldIgnoreJid: (jid) => {
       return (
@@ -162,14 +168,11 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
         connectionStartTime = Date.now();
       }
 
-      // CORREÇÃO 3: Timeout para evitar "conectando" infinito
       const elapsed = Date.now() - connectionStartTime;
       if (elapsed > 45000) {
-        // 45 segundos de "conectando"
         console.warn(
           `[${instanceId}] ⏱️  Timeout na conexão - recriando cliente`
         );
-        // Fechar conexão e recriar
         try {
           await sock.end();
         } catch (e) {}
@@ -185,8 +188,8 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
         : 0;
       console.log(`[${instanceId}] ✅ Conexão aberta (${elapsed.toFixed(1)}s)`);
 
-      // CORREÇÃO 4: Aguardar um pouco para garantir que socket.user está disponível
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // CRÍTICO: Aguardar para socket.user estar disponível
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const hasUser = !!sock.user;
       console.log(`[${instanceId}] Verificando autenticação:`, {
@@ -197,7 +200,6 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       if (hasUser) {
         console.log(`[${instanceId}] 👤 Usuário autenticado: ${sock.user.id}`);
 
-        // CORREÇÃO 5: Enviar presença antes de chamar onReady
         try {
           await sock.sendPresenceUpdate("available");
           console.log(`[${instanceId}] 📡 Presença enviada`);
@@ -215,7 +217,6 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
           );
         }
 
-        // Chamar onReady apenas uma vez
         if (onReady && !readyCalled) {
           readyCalled = true;
           console.log(`[${instanceId}] ✅ onReady chamado - instância pronta!`);
@@ -226,7 +227,6 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
         console.warn(
           `[${instanceId}] ⏳ Conexão aberta mas socket.user ainda não disponível`
         );
-        // Aguardar mais um pouco
         setTimeout(async () => {
           if (sock.user && !readyCalled) {
             console.log(
@@ -263,7 +263,13 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
       if (shouldReconnect) {
         console.log(`[${instanceId}] 🔄 Reconectando em 5s...`);
         setTimeout(() => {
-          createClient(instanceId, onQR, onReady, onDisconnect);
+          createClientPaired(
+            instanceId,
+            pairingCode,
+            onQR,
+            onReady,
+            onDisconnect
+          );
         }, 5000);
       } else {
         console.log(`[${instanceId}] ❌ Logout permanente`);
@@ -284,4 +290,4 @@ async function createClient(instanceId, onQR, onReady, onDisconnect) {
   return sock;
 }
 
-module.exports = createClient;
+module.exports = createClientPaired;
